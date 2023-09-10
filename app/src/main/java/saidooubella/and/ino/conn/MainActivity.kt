@@ -1,12 +1,9 @@
 package saidooubella.and.ino.conn
 
-import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothDevice.*
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothSocket
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,51 +11,40 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager.FEATURE_BLUETOOTH
 import android.os.Build.VERSION.SDK_INT
 import android.os.Build.VERSION_CODES.S
-import android.os.Build.VERSION_CODES.TIRAMISU
 import android.os.Bundle
-import android.os.Parcelable
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
-import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.Text
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Radar
+import androidx.compose.material.icons.outlined.Send
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.getSystemService
-import androidx.lifecycle.ViewModel
+import kotlinx.collections.immutable.PersistentList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import saidooubella.and.ino.conn.ui.theme.And2InoConnectTheme
-import java.io.InputStream
-import java.io.OutputStream
 import java.util.*
-
-private const val BLUETOOTH_CONNECT = "android.permission.BLUETOOTH_CONNECT"
-
-@RequiresApi(S)
-private val BLUETOOTH_PERMISSIONS = arrayOf(
-    Manifest.permission.BLUETOOTH_SCAN,
-    Manifest.permission.BLUETOOTH_CONNECT,
-)
-
-private val SerialPortProfileUUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 class MainActivity : ComponentActivity() {
 
@@ -90,15 +76,13 @@ class MainActivity : ComponentActivity() {
 
                 val resultLauncher =
                     rememberLauncherForActivityResult(StartActivityForResult()) { result ->
-
                         if (result.resultCode == RESULT_OK && SDK_INT >= S) {
                             permissionsLauncher.launch(BLUETOOTH_PERMISSIONS)
-                            return@rememberLauncherForActivityResult
-                        }
-
-                        screenState = when (result.resultCode == RESULT_OK) {
-                            true -> ScreenState.ReadyForConnection
-                            else -> ScreenState.Error("Couldn't turn on Bluetooth")
+                        } else {
+                            screenState = when (result.resultCode == RESULT_OK) {
+                                true -> ScreenState.ReadyForConnection
+                                else -> ScreenState.Error("Couldn't turn on Bluetooth")
+                            }
                         }
                     }
 
@@ -115,14 +99,15 @@ class MainActivity : ComponentActivity() {
                 val coroutineScope = rememberCoroutineScope()
 
                 when (val state = screenState) {
-                    is ScreenState.Error -> ErrorScreen(state)
+                    is ScreenState.Error -> ErrorScreen(state.message)
                     is ScreenState.Loading -> LoadingScreen()
                     is ScreenState.ReadyForConnection -> {
                         ConnectionScreen(bluetoothAdapter) {
                             screenState = ScreenState.Loading
                             coroutineScope.launch {
-                                val connection = connectToDevice(it.device) ?: run {
-                                    screenState = ScreenState.Error("Couldn't connect to the device")
+                                val connection = connectToDevice(it) ?: run {
+                                    screenState =
+                                        ScreenState.Error("Couldn't connect to the device")
                                     return@launch
                                 }
                                 screenState = ScreenState.ReadyForMonitoring(it, connection)
@@ -130,8 +115,16 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     is ScreenState.ReadyForMonitoring -> {
-                        Box(contentAlignment = Alignment.Center) {
-                            Text(text = "Connected")
+                        DisposableEffect(state.connection) {
+                            onDispose {
+                                state.connection.close()
+                                screenState = ScreenState.ReadyForConnection
+                            }
+                        }
+                        MonitoringScreen {
+                            coroutineScope.launch {
+                                state.connection.write(it.toByteArray(Charsets.UTF_8))
+                            }
                         }
                     }
                 }
@@ -140,91 +133,106 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@SuppressLint("MissingPermission")
-private suspend fun connectToDevice(device: BluetoothDevice): DeviceConnection? {
-    return withContext(Dispatchers.IO) { device.connect() }?.let(::DeviceConnectionImpl)
-}
-
-@RequiresPermission(BLUETOOTH_CONNECT)
-private fun BluetoothDevice.connect(): BluetoothSocket? = tryOrNull {
-    createRfcommSocketToServiceRecord(SerialPortProfileUUID).apply { connect() }
-}
-
-private class DeviceConnectionImpl private constructor(
-    private val socket: BluetoothSocket,
-    private val inputStream: InputStream,
-    private val outputStream: OutputStream,
-) : DeviceConnection {
-
-    constructor(socket: BluetoothSocket) : this(socket, socket.inputStream, socket.outputStream)
-
-    override suspend fun read(arr: ByteArray, offset: Int, length: Int): Int =
-        withContext(Dispatchers.IO) {
-            tryOrNull { inputStream.read(arr, offset, length) } ?: -1
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun MonitoringScreen(onSend: (String) -> Unit) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Text(modifier = Modifier.align(Alignment.Center), text = "Connected")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+                .imePadding(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            var input by remember { mutableStateOf("") }
+            OutlinedTextField(
+                modifier = Modifier
+                    .height(56.dp)
+                    .weight(1.0F),
+                value = input,
+                onValueChange = { input = it },
+                shape = CircleShape,
+                trailingIcon = {
+                    Surface(
+                        color = Color.Transparent,
+                        onClick = { onSend(input); input = "" },
+                        shape = CircleShape,
+                    ) {
+                        Icon(
+                            modifier = Modifier.padding(16.dp),
+                            imageVector = Icons.Outlined.Send,
+                            contentDescription = "Send"
+                        )
+                    }
+                }
+            )
         }
-
-    override suspend fun write(arr: ByteArray, offset: Int, length: Int): Boolean =
-        withContext(Dispatchers.IO) {
-            tryOrNull { outputStream.write(arr, offset, length); true } ?: false
-        }
-
-    override fun close() {
-        tryOrNull { socket.close() }
     }
-}
-
-private interface DeviceConnection {
-    suspend fun read(arr: ByteArray, offset: Int, length: Int): Int
-    suspend fun write(arr: ByteArray, offset: Int, length: Int): Boolean
-    fun close()
 }
 
 @Composable
 @SuppressLint("MissingPermission")
+@OptIn(ExperimentalMaterial3Api::class)
 private fun ConnectionScreen(
     btAdapter: BluetoothAdapter,
-    devices: List<BtDevice> = discoverBluetoothDevices(btAdapter),
+    discoveryState: DiscoveryState = discoverBluetoothDevices(btAdapter),
     onDevice: (BtDevice) -> Unit,
 ) {
     Column {
 
-        DisposableEffect(btAdapter) {
-            btAdapter.startDiscovery()
-            onDispose { btAdapter.cancelDiscovery() }
-        }
+        CenterAlignedTopAppBar(
+            modifier = Modifier.fillMaxWidth(),
+            title = {
+                Text(
+                    text = "Devices Discoverability",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            actions = {
+                Surface(
+                    color = Color.Transparent,
+                    onClick = {
+                        when (discoveryState.isDiscovering) {
+                            true -> btAdapter.cancelDiscovery()
+                            else -> btAdapter.startDiscovery()
+                        }
+                    },
+                    shape = CircleShape,
+                ) {
+                    val (icon, description) = when (discoveryState.isDiscovering) {
+                        true -> Icons.Outlined.Close to "Stop discovery"
+                        else -> Icons.Outlined.Radar to "Start Discovery"
+                    }
+                    Icon(imageVector = icon, contentDescription = description)
+                }
+            }
+        )
 
-        Box(
-            modifier = Modifier
-                .padding(20.dp)
-                .fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "Devices Discoverability",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-            )
+        if (discoveryState.isDiscovering) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
-
-        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
 
         LazyColumn(
             contentPadding = PaddingValues(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(devices) { device ->
-                BtDeviceItem(device) { onDevice(device) }
+            items(discoveryState.devices) { device ->
+                BtDeviceItem(device, onDevice)
             }
         }
     }
 }
 
 @Composable
-private fun BtDeviceItem(device: BtDevice, onClick: () -> Unit) {
+private fun BtDeviceItem(device: BtDevice, onClick: (BtDevice) -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable { onClick(device) }
     ) {
         Row(modifier = Modifier.padding(8.dp)) {
             Column(
@@ -240,30 +248,59 @@ private fun BtDeviceItem(device: BtDevice, onClick: () -> Unit) {
 }
 
 @Composable
-@RequiresPermission(BLUETOOTH_CONNECT)
+@RequiresPermission(allOf = [BLUETOOTH_CONNECT, BLUETOOTH_SCAN])
 private fun discoverBluetoothDevices(
-    btAdapter: BluetoothAdapter,
+    bluetoothAdapter: BluetoothAdapter,
     context: Context = LocalContext.current
-): List<BtDevice> {
+): DiscoveryState {
 
-    val devices = remember { mutableStateListOf<BtDevice>() }
+    var state by remember { mutableStateOf(DiscoveryState()) }
 
-    DisposableEffect(context) {
-
-        btAdapter.bondedDevices.mapTo(devices) { BtDevice(it) }
+    DisposableEffect(bluetoothAdapter, context) {
 
         val receiver = object : BroadcastReceiver() {
             @RequiresPermission(BLUETOOTH_CONNECT)
             override fun onReceive(context: Context?, intent: Intent?) {
-                devices.add(BtDevice(intent?.parcelable(EXTRA_DEVICE) ?: return))
+                when (intent?.action) {
+                    BluetoothDevice.ACTION_FOUND -> {
+                        val device = BtDevice.from(intent) ?: return
+                        state = state.copy(devices = state.devices.add(device))
+                    }
+                    BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
+                        state = state.copy(devices = persistentListOf(), isDiscovering = true)
+                    }
+                    BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                        state = state.copy(isDiscovering = false)
+                    }
+                }
             }
         }
 
-        context.registerReceiver(receiver, IntentFilter(ACTION_FOUND))
-        onDispose { context.unregisterReceiver(receiver) }
+        context.registerReceiver(receiver, DISCOVERY_INTENT_FILTER)
+        bluetoothAdapter.startDiscovery()
+
+        onDispose {
+            bluetoothAdapter.cancelDiscovery()
+            context.unregisterReceiver(receiver)
+        }
     }
 
-    return devices
+    return state
+}
+
+private data class DiscoveryState(
+    val devices: PersistentList<BtDevice> = persistentListOf(),
+    val isDiscovering: Boolean = false,
+)
+
+@Composable
+private fun ErrorScreen(message: String) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = message, fontSize = 18.sp)
+    }
 }
 
 @Composable
@@ -276,14 +313,9 @@ private fun LoadingScreen() {
     }
 }
 
-@Composable
-private fun ErrorScreen(state: ScreenState.Error) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text = state.message, fontSize = 18.sp)
-    }
+@SuppressLint("MissingPermission")
+private suspend fun connectToDevice(device: BtDevice): DeviceConnection? {
+    return withContext(Dispatchers.IO) { device.connect() }?.let(::DeviceConnectionImpl)
 }
 
 private sealed interface ScreenState {
@@ -299,48 +331,4 @@ private sealed interface ScreenState {
 
     data class Error(val message: String) : ScreenState
 
-}
-
-private data class BtDevice(
-    val name: String,
-    val address: String,
-    val bondState: BondState,
-    val device: BluetoothDevice
-) {
-
-    @RequiresPermission(BLUETOOTH_CONNECT)
-    constructor(device: BluetoothDevice) : this(
-        device.name,
-        device.address,
-        BondState(device.bondState),
-        device
-    )
-
-    enum class BondState(val displayName: String) {
-
-        Bonded("Bounded"),
-        Bonding("Bonding"),
-        None("");
-
-        companion object {
-            operator fun invoke(bondState: Int) = when (bondState) {
-                BOND_BONDING -> BtDevice.BondState.Bonding
-                BOND_BONDED -> BtDevice.BondState.Bonded
-                BOND_NONE -> BtDevice.BondState.None
-                else -> error("Illegal state encountered")
-            }
-        }
-    }
-}
-
-@Suppress("DEPRECATION")
-private inline fun <reified T : Parcelable> Intent.parcelable(key: String): T? {
-    return when {
-        SDK_INT >= TIRAMISU -> getParcelableExtra(key, T::class.java)
-        else -> getParcelableExtra(key)
-    }
-}
-
-private inline fun <T, R> T.tryOrNull(block: T.() -> R): R? {
-    return try { block() } catch (_: Exception) { null }
 }
