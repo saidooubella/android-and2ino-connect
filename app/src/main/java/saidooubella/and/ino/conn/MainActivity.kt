@@ -7,27 +7,25 @@ import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager.FEATURE_BLUETOOTH
 import android.os.Build.VERSION.SDK_INT
 import android.os.Build.VERSION_CODES.S
 import android.os.Bundle
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
-import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
+import androidx.activity.result.contract.ActivityResultContracts.*
 import androidx.annotation.RequiresPermission
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Radar
-import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,8 +35,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
-import kotlinx.collections.immutable.PersistentList
+import androidx.core.view.WindowCompat
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,13 +50,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (!packageManager.hasSystemFeature(FEATURE_BLUETOOTH)) {
-            Toast.makeText(this, "Bluetooth isn't available", Toast.LENGTH_SHORT).show()
-            finish()
-        }
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        val bluetoothManager = getSystemService<BluetoothManager>() ?: return
-        val bluetoothAdapter = bluetoothManager.adapter ?: return
+        val bluetoothAdapter = getSystemService<BluetoothManager>()?.adapter
 
         setContent {
 
@@ -87,7 +82,9 @@ class MainActivity : ComponentActivity() {
                     }
 
                 LaunchedEffect(bluetoothAdapter, resultLauncher) {
-                    if (!bluetoothAdapter.isEnabled) {
+                    if (!packageManager.hasSystemFeature(FEATURE_BLUETOOTH)) {
+                        screenState = ScreenState.Error("Bluetooth isn't available")
+                    } else if (bluetoothAdapter?.isEnabled == false) {
                         resultLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
                     } else if (SDK_INT >= S) {
                         permissionsLauncher.launch(BLUETOOTH_PERMISSIONS)
@@ -99,26 +96,28 @@ class MainActivity : ComponentActivity() {
                 val coroutineScope = rememberCoroutineScope()
 
                 when (val state = screenState) {
-                    is ScreenState.Error -> ErrorScreen(state.message)
+                    is ScreenState.Error -> ErrorScreen(state)
                     is ScreenState.Loading -> LoadingScreen()
                     is ScreenState.ReadyForConnection -> {
-                        ConnectionScreen(bluetoothAdapter) {
+                        ConnectionScreen(bluetoothAdapter!!) {
                             screenState = ScreenState.Loading
                             coroutineScope.launch {
                                 val connection = connectToDevice(it) ?: run {
                                     screenState =
-                                        ScreenState.Error("Couldn't connect to the device")
+                                        ScreenState.Error("Couldn't connect to the device") {
+                                            screenState = ScreenState.ReadyForConnection
+                                        }
                                     return@launch
                                 }
                                 screenState = ScreenState.ReadyForMonitoring(it, connection)
                             }
                         }
                     }
+
                     is ScreenState.ReadyForMonitoring -> {
                         DisposableEffect(state.connection) {
                             onDispose {
                                 state.connection.close()
-                                screenState = ScreenState.ReadyForConnection
                             }
                         }
                         MonitoringScreen {
@@ -134,15 +133,27 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 private fun MonitoringScreen(onSend: (String) -> Unit) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        Text(modifier = Modifier.align(Alignment.Center), text = "Connected")
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1.0F)
+                .statusBarsPadding()
+                .imeNestedScroll(),
+            reverseLayout = true,
+            contentPadding = PaddingValues(top = 16.dp, start = 16.dp, end = 16.dp)
+        ) {}
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .align(Alignment.BottomCenter)
                 .padding(16.dp)
+                .navigationBarsPadding()
                 .imePadding(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -163,7 +174,7 @@ private fun MonitoringScreen(onSend: (String) -> Unit) {
                     ) {
                         Icon(
                             modifier = Modifier.padding(16.dp),
-                            imageVector = Icons.Outlined.Send,
+                            imageVector = Icons.AutoMirrored.Outlined.Send,
                             contentDescription = "Send"
                         )
                     }
@@ -179,9 +190,13 @@ private fun MonitoringScreen(onSend: (String) -> Unit) {
 private fun ConnectionScreen(
     btAdapter: BluetoothAdapter,
     discoveryState: DiscoveryState = discoverBluetoothDevices(btAdapter),
-    onDevice: (BtDevice) -> Unit,
+    onDevice: (BTDevice) -> Unit,
 ) {
-    Column {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
 
         CenterAlignedTopAppBar(
             modifier = Modifier.fillMaxWidth(),
@@ -217,7 +232,7 @@ private fun ConnectionScreen(
         }
 
         LazyColumn(
-            contentPadding = PaddingValues(8.dp),
+            contentPadding = PaddingValues(8.dp) + WindowInsets.navigationBars.asPaddingValues(),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(discoveryState.devices) { device ->
@@ -228,7 +243,7 @@ private fun ConnectionScreen(
 }
 
 @Composable
-private fun BtDeviceItem(device: BtDevice, onClick: (BtDevice) -> Unit) {
+private fun BtDeviceItem(device: BTDevice, onClick: (BTDevice) -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -239,10 +254,13 @@ private fun BtDeviceItem(device: BtDevice, onClick: (BtDevice) -> Unit) {
                 modifier = Modifier.weight(1.0f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(device.name)
-                Text(device.address)
+                Text(text = device.name, color = MaterialTheme.colorScheme.onBackground)
+                Text(text = device.address, color = MaterialTheme.colorScheme.onBackground)
             }
-            Text(device.bondState.displayName)
+            Text(
+                text = device.bondState.displayName,
+                color = MaterialTheme.colorScheme.onBackground
+            )
         }
     }
 }
@@ -263,12 +281,14 @@ private fun discoverBluetoothDevices(
             override fun onReceive(context: Context?, intent: Intent?) {
                 when (intent?.action) {
                     BluetoothDevice.ACTION_FOUND -> {
-                        val device = BtDevice.from(intent) ?: return
+                        val device = BTDevice.from(intent) ?: return
                         state = state.copy(devices = state.devices.add(device))
                     }
+
                     BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
                         state = state.copy(devices = persistentListOf(), isDiscovering = true)
                     }
+
                     BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
                         state = state.copy(isDiscovering = false)
                     }
@@ -276,7 +296,12 @@ private fun discoverBluetoothDevices(
             }
         }
 
-        context.registerReceiver(receiver, DISCOVERY_INTENT_FILTER)
+        ContextCompat.registerReceiver(
+            context,
+            receiver,
+            DISCOVERY_INTENT_FILTER,
+            ContextCompat.RECEIVER_EXPORTED
+        )
         bluetoothAdapter.startDiscovery()
 
         onDispose {
@@ -288,25 +313,39 @@ private fun discoverBluetoothDevices(
     return state
 }
 
-private data class DiscoveryState(
-    val devices: PersistentList<BtDevice> = persistentListOf(),
-    val isDiscovering: Boolean = false,
-)
-
 @Composable
-private fun ErrorScreen(message: String) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center,
+private fun ErrorScreen(error: ScreenState.Error) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(text = message, fontSize = 18.sp)
+        Text(
+            text = error.message,
+            fontSize = 18.sp,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        if (error.action != null) {
+            Button(
+                modifier = Modifier.padding(top = 16.dp),
+                onClick = error.action,
+            ) {
+                Text(text = "Retry")
+            }
+        }
     }
 }
 
 @Composable
 private fun LoadingScreen() {
     Box(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .safeDrawingPadding(),
         contentAlignment = Alignment.Center,
     ) {
         CircularProgressIndicator()
@@ -314,7 +353,7 @@ private fun LoadingScreen() {
 }
 
 @SuppressLint("MissingPermission")
-private suspend fun connectToDevice(device: BtDevice): DeviceConnection? {
+private suspend fun connectToDevice(device: BTDevice): DeviceConnection? {
     return withContext(Dispatchers.IO) { device.connect() }?.let(::DeviceConnectionImpl)
 }
 
@@ -323,12 +362,12 @@ private sealed interface ScreenState {
     object Loading : ScreenState
 
     data class ReadyForMonitoring(
-        val btDevice: BtDevice,
+        val btDevice: BTDevice,
         val connection: DeviceConnection,
     ) : ScreenState
 
     object ReadyForConnection : ScreenState
 
-    data class Error(val message: String) : ScreenState
+    data class Error(val message: String, val action: (() -> Unit)? = null) : ScreenState
 
 }

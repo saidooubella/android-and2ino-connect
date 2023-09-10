@@ -6,9 +6,15 @@ import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.io.OutputStream
 
+val EmptyDeviceConnection = object : DeviceConnection {
+    override suspend fun write(arr: ByteArray, offset: Int, length: Int): Boolean = false
+    override suspend fun read(arr: ByteArray, offset: Int, length: Int): Int = 0
+    override fun close() = Unit
+}
+
 interface DeviceConnection {
-    suspend fun read(arr: ByteArray, offset: Int, length: Int): Int
     suspend fun write(arr: ByteArray, offset: Int, length: Int): Boolean
+    suspend fun read(arr: ByteArray, offset: Int, length: Int): Int
     fun close()
 }
 
