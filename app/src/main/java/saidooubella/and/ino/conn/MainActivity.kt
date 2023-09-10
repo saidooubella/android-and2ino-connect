@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.core.view.WindowCompat
+import kotlinx.collections.immutable.mutate
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,13 +117,12 @@ class MainActivity : ComponentActivity() {
 
                     is ScreenState.ReadyForMonitoring -> {
                         DisposableEffect(state.connection) {
-                            onDispose {
-                                state.connection.close()
-                            }
+                            onDispose { state.connection.close() }
                         }
                         MonitoringScreen {
                             coroutineScope.launch {
                                 state.connection.write(it.toByteArray(Charsets.UTF_8))
+                                state.connection.write('\n'.code)
                             }
                         }
                     }
@@ -286,7 +286,10 @@ private fun discoverBluetoothDevices(
                     }
 
                     BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
-                        state = state.copy(devices = persistentListOf(), isDiscovering = true)
+                        val bondedDevices = persistentListOf<BTDevice>().mutate {
+                            bluetoothAdapter.bondedDevices.mapTo(it, ::BTDevice)
+                        }
+                        state = state.copy(devices = bondedDevices, isDiscovering = true)
                     }
 
                     BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {

@@ -6,15 +6,15 @@ import android.bluetooth.BluetoothSocket
 import android.content.Intent
 import androidx.annotation.RequiresPermission
 
-class BTDevice(
+class BTDevice private constructor(
     val name: String,
     val address: String,
     val bondState: BondState,
-    private val device: BluetoothDevice?
+    private val device: BluetoothDevice
 ) {
 
     @RequiresPermission(BLUETOOTH_CONNECT)
-    private constructor(device: BluetoothDevice) : this(
+    constructor(device: BluetoothDevice) : this(
         device.name ?: "<unknown>",
         device.address,
         BondState(device.bondState),
@@ -23,7 +23,7 @@ class BTDevice(
 
     @RequiresPermission(BLUETOOTH_CONNECT)
     fun connect(): BluetoothSocket? = tryOrNull {
-        device?.createRfcommSocketToServiceRecord(SerialPortProfileUUID).apply { connect() }
+        device.createRfcommSocketToServiceRecord(SerialPortProfileUUID)?.apply { connect() }
     }
 
     enum class BondState(val displayName: String) {
