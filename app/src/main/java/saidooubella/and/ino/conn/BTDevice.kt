@@ -1,5 +1,6 @@
 package saidooubella.and.ino.conn
 
+import android.Manifest
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothDevice.EXTRA_DEVICE
 import android.bluetooth.BluetoothSocket
@@ -13,7 +14,7 @@ class BTDevice private constructor(
     private val device: BluetoothDevice
 ) {
 
-    @RequiresPermission(BLUETOOTH_CONNECT)
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     constructor(device: BluetoothDevice) : this(
         device.name ?: "<unknown>",
         device.address,
@@ -21,7 +22,7 @@ class BTDevice private constructor(
         device
     )
 
-    @RequiresPermission(BLUETOOTH_CONNECT)
+    @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
     fun connect(): BluetoothSocket? = tryOrNull {
         device.createRfcommSocketToServiceRecord(SerialPortProfileUUID)?.apply { connect() }
     }
@@ -43,7 +44,7 @@ class BTDevice private constructor(
     }
 
     companion object {
-        @RequiresPermission(BLUETOOTH_CONNECT)
+        @RequiresPermission(Manifest.permission.BLUETOOTH_CONNECT)
         fun from(intent: Intent?): BTDevice? {
             return intent?.parcelable<BluetoothDevice>(EXTRA_DEVICE)?.let(::BTDevice)
         }

@@ -12,10 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 
 private val DarkColorScheme = darkColorScheme(
@@ -46,11 +44,12 @@ fun And2InoConnectTheme(
     content: @Composable () -> Unit,
 ) {
 
-    val colorScheme = when (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        true -> when (darkTheme) {
+    val colorScheme = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> when (darkTheme) {
             true -> dynamicDarkColorScheme(LocalContext.current)
             else -> dynamicLightColorScheme(LocalContext.current)
         }
+
         else -> if (darkTheme) DarkColorScheme else LightColorScheme
     }
 

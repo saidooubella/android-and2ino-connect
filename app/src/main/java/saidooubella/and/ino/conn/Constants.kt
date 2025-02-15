@@ -7,14 +7,16 @@ import android.content.IntentFilter
 import android.os.Build
 import java.util.*
 
-const val BLUETOOTH_CONNECT: String = "android.permission.BLUETOOTH_CONNECT"
+//const val BLUETOOTH_CONNECT: String = "android.permission.BLUETOOTH_CONNECT"
 const val BLUETOOTH_SCAN: String = "android.permission.BLUETOOTH_SCAN"
 
-val BLUETOOTH_PERMISSIONS: Array<String> = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+val PERMISSIONS: Array<String> = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
     arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
 } else {
     arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
 }
+
+val IOMenuItems = listOf("Input" to "0", "Output" to "1")
 
 val DISCOVERY_INTENT_FILTER: IntentFilter = IntentFilter().apply {
     addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
